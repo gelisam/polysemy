@@ -9,8 +9,8 @@ import Criterion (bench, bgroup, whnf)
 import Criterion.Main (defaultMain)
 import Data.Functor.Identity
 
-import Control.Monad.Freer (run)
-import Control.Monad.Freer.State (get, put, runState)
+import qualified Control.Monad.Freer as Simple
+import qualified Control.Monad.Freer.State as Simple
 
 import qualified Lib as TFTF
 import qualified Eff.Type as TFTF
@@ -20,12 +20,16 @@ import qualified Eff.Type as TFTF
 --------------------------------------------------------------------------------
 
 countDown :: Int -> (Int, Int)
-countDown start = run (runState start go)
-  where go = get >>= (\n -> if n <= 0 then pure n else put (n-1) >> go)
+countDown start = Simple.run (Simple.runState start go)
+  where
+    go :: Simple.Eff '[Simple.State Int] Int
+    go = Simple.get >>= (\n -> if n <= 0 then pure n else Simple.put (n-1) >> go)
 
 countDownMTL :: Int -> (Int, Int)
 countDownMTL = MTL.runState go
-  where go = MTL.get >>= (\n -> if n <= 0 then pure n else MTL.put (n-1) >> go)
+  where
+    go :: MTL.State Int Int
+    go = MTL.get >>= (\n -> if n <= 0 then pure n else MTL.put (n-1) >> go)
 
 countDownTFTF :: Int -> Int
 countDownTFTF start = fst $ TFTF.run $ TFTF.runState start go
