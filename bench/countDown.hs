@@ -70,15 +70,18 @@ data StateG s a where
   GetG :: StateG s s
   PutG :: s -> StateG s ()
 
-runStateFinal :: forall s a. s -> FreerFinal (StateG s) a -> (a, s)
-runStateFinal s0 fa = MTL.runState (runFreerFinal fa embed) s0
+runStateFinal :: forall s a. s -> FreerFinal (StateG s) a -> FreerFinal Identity (a, s)
+runStateFinal s0 fa = flip MTL.runStateT s0 $ runFreerFinal fa embed
   where
-    embed :: StateG s x -> MTL.State s x
+    embed :: StateG s x -> MTL.StateT s (FreerFinal Identity) x
     embed GetG      = MTL.get
     embed (PutG s') = MTL.put s'
 
+runIdentityFinal :: FreerFinal Identity a -> a
+runIdentityFinal fa = runIdentity $ runFreerFinal fa id
+
 countDownFinal :: Int -> Int
-countDownFinal start = fst $ runStateFinal start go
+countDownFinal start = fst $ runIdentityFinal $ runStateFinal start go
   where
     go :: FreerFinal (StateG Int) Int
     go = embedInFinal GetG >>= (\n -> if n <= 0 then (pure n) else embedInFinal (PutG (n-1)) >> go)
@@ -110,18 +113,22 @@ embedInFree fa = Deep (fmap Pure fa)
 data StateF s a = GetF (s -> a) | PutF s a
   deriving Functor
 
-runStateFree :: forall s a. s -> Free (StateF s) a -> (a, s)
-runStateFree s0 fa = MTL.runState (go fa) s0
+runStateFree :: forall s a. s -> Free (StateF s) a -> Free Identity (a, s)
+runStateFree s0 = flip MTL.runStateT s0 . go
   where
-    go :: Free (StateF s) x -> MTL.State s x
+    go :: Free (StateF s) x -> MTL.StateT s (Free Identity) x
     go (Pure x) = pure x
     go (Deep (GetF cc)) = do s <- MTL.get
                              go (cc s)
     go (Deep (PutF s' fx)) = do MTL.put s'
                                 go fx
 
+runIdentityFree :: Free Identity a -> a
+runIdentityFree (Pure a) = a
+runIdentityFree (Deep (Identity fa)) = runIdentityFree fa
+
 countDownFree :: Int -> Int
-countDownFree start = fst $ runStateFree start go
+countDownFree start = fst $ runIdentityFree $ runStateFree start go
   where
     go :: Free (StateF Int) Int
     go = embedInFree (GetF id) >>= (\n -> if n <= 0 then (pure n) else embedInFree (PutF (n-1) ()) >> go)
@@ -150,18 +157,22 @@ instance Monad (Freer g) where
 embedInFreer :: g a -> Freer g a
 embedInFreer ga = Deeper ga Purer
 
-runStateFreer :: forall s a. s -> Freer (StateG s) a -> (a, s)
-runStateFreer s0 fa = MTL.runState (go fa) s0
+runStateFreer :: forall s a. s -> Freer (StateG s) a -> Freer Identity (a, s)
+runStateFreer s0 = flip MTL.runStateT s0 . go
   where
-    go :: Freer (StateG s) x -> MTL.State s x
+    go :: Freer (StateG s) x -> MTL.StateT s (Freer Identity) x
     go (Purer x) = pure x
     go (Deeper GetG cc) = do s <- MTL.get
                              go (cc s)
     go (Deeper (PutG s') cc) = do MTL.put s'
                                   go (cc ())
 
+runIdentityFreer :: Freer Identity a -> a
+runIdentityFreer (Purer a) = a
+runIdentityFreer (Deeper (Identity x) cc) = runIdentityFreer (cc x)
+
 countDownFreer :: Int -> Int
-countDownFreer start = fst $ runStateFreer start go
+countDownFreer start = fst $ runIdentityFreer $ runStateFreer start go
   where
     go :: Freer (StateG Int) Int
     go = embedInFreer GetG >>= (\n -> if n <= 0 then (pure n) else embedInFreer (PutG (n-1)) >> go)
@@ -197,16 +208,26 @@ runCodensity :: Monad m => Codensity m a -> m a
 runCodensity ca = unCodensity ca pure
 
 
-type Codenser g a = Codensity (Freer g) a
+type Codenser g = Codensity (Freer g)
 
 embedInCodenser :: g a -> Codenser g a
 embedInCodenser = embedInCodensity . embedInFreer
 
-runStateCodenser :: forall s a. s -> Codenser (StateG s) a -> (a, s)
-runStateCodenser s0 = runStateFreer s0 . runCodensity
+runStateCodenser :: forall s a. s -> Codenser (StateG s) a -> Codenser Identity (a, s)
+runStateCodenser s0 = flip MTL.runStateT s0 . go . runCodensity
+  where
+    go :: Freer (StateG s) x -> MTL.StateT s (Codenser Identity) x
+    go (Purer x) = pure x
+    go (Deeper GetG cc) = do s <- MTL.get
+                             go (cc s)
+    go (Deeper (PutG s') cc) = do MTL.put s'
+                                  go (cc ())
+
+runIdentityCodenser :: Codenser Identity a -> a
+runIdentityCodenser = runIdentityFreer . runCodensity
 
 countDownCodenser :: Int -> Int
-countDownCodenser start = fst $ runStateCodenser start go
+countDownCodenser start = fst $ runIdentityCodenser $ runStateCodenser start go
   where
     go :: Codenser (StateG Int) Int
     go = embedInCodenser GetG >>= (\n -> if n <= 0 then (pure n) else embedInCodenser (PutG (n-1)) >> go)
